@@ -1,95 +1,42 @@
-import json
-import logging
-from datetime import datetime
-
-import boto3
-from pynamodb.models import Model
-from pynamodb.attributes import (
-    UnicodeAttribute, 
-    UnicodeSetAttribute,
-    UTCDateTimeAttribute, 
-)
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from fastapi import FastAPI, WebSocket
+from broadcaster import Broadcast
+from starlette.concurrency import run_until_first_complete
 
 
-class RoomModel(Model):
-    uid = UnicodeAttribute(hash_key=True)
-    timestamp = UTCDateTimeAttribute(default=datetime.utcnow)
-    connections = UnicodeSetAttribute(default=set)
-    
-    class Meta:
-        region = 'eu-west-1'
-        table_name = 'rooms'
+app = FastAPI()
+bc = Broadcast('redis://localhost:6379')
 
 
-def connect(event, context):
-    logger.info(json.dumps(event))
-    cid = event['requestContext']['connectionId']
-
-    try:
-        logger.info('Fetching room')
-        room = RoomModel.get('nice')
-    except RoomModel.DoesNotExist:
-        logger.info('Room does not exist. Creating new room')
-        room = RoomModel('nice', connections={cid})
-        room.save()
-    
-    logger.info('Adding new connection')
-    room.update(actions=[
-        RoomModel.connections.add({cid})
-    ])
-
-    return {}
+@app.on_event('startup')
+async def startup():
+    await bc.connect()
 
 
-def disconnect(event, context):
-    logger.info(json.dumps(event))
-    cid = event['requestContext']['connectionId']
-
-    try:
-        logger.info('Fetching room')
-        room = RoomModel.get('nice')
-    except RoomModel.DoesNotExist:
-        logger.info('Room does not exist. Doing nothing')
-        return {}
-    
-    if room.connections == {cid}:
-        logger.info('Room only contains current connection. Deleting room')
-        room.delete()
-        return {}
-
-    logger.info('Removing connection from room')
-    room.update(actions=[
-        RoomModel.connections.delete({cid})
-    ])
-
-    return {}
+@app.on_event('shutdown')
+async def shutdown():
+    await bc.disconnect()
 
 
-def message(event, context):
-    logger.info(json.dumps(event))
-    cid = event['requestContext']['connectionId']
+@app.get('/ping')
+async def pint():
+    return 'pong'
 
-    domain = event['requestContext']['domainName']
-    stage = event['requestContext']['stage']
 
-    gtw = boto3.client(
-        'apigatewaymanagementapi', 
-        endpoint_url=f'https://{domain}/{stage}'
+async def receiver(uid: str, ws: WebSocket):
+    async for msg in ws.iter_text():
+        await bc.publish(channel=uid, message=msg)
+
+
+async def sender(uid: str, ws: WebSocket):
+    async with bc.subscribe(channel=uid) as subs:
+        async for i in subs:
+            await ws.send_text(i.message)
+
+
+@app.websocket('/{uid}')
+async def room(uid: str, ws: WebSocket):
+    await ws.accept()
+    await run_until_first_complete(
+        (sender, {'uid': uid, 'ws': ws}),
+        (receiver, {'uid': uid, 'ws': ws}),
     )
-
-    try:
-        logger.info('Fetching room')
-        room = RoomModel.get('nice')
-    except RoomModel.DoesNotExist:
-        logger.info('Room does not exist. Doing nothing')
-        return {}
-
-    data = event['body']
-    for i in room.connections:
-        logger.info('Sending data to connection: %s', i)
-        gtw.post_to_connection(ConnectionId=i, Data=data)
-
-    return {}

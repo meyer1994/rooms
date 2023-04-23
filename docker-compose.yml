@@ -1,9 +1,7 @@
 version: '3'
 
 services:
-  localstack:
-    image: localstack/localstack
+  redis:
+    image: redis
     ports:
-      - 4566:4566
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - 6379:6379
