@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket
 from broadcaster import Broadcast
 from starlette.concurrency import run_until_first_complete
-
+from pydantic import BaseSettings
 
 app = FastAPI()
 bc = Broadcast('redis://localhost:6379')
