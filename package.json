@@ -1,8 +1,0 @@
-{
-  "name": "rooms",
-  "devDependencies": {
-    "serverless": "^3.30.1",
-    "serverless-localstack": "^1.0.6",
-    "serverless-python-requirements": "^6.0.0"
-  }
-}
